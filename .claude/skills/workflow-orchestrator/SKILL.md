@@ -196,22 +196,40 @@ JSON 示例和完整步骤见 `references/action-handlers.md` §spawn。
 {
   "action": "confirm",
   "pending": [
-    {"stage_id": "s03", "instance_id": "20260519-003", "questions": ["确认建模方案？"]},
-    {"stage_id": "s01-scheme-design", "instance_id": "child-001", "parent_stage_id": "p2-question-solution", "questions": ["确认方案设计？"]}
+    {
+      "stage_id": "s02",
+      "instance_id": "20260519-003",
+      "questions": ["full_design：全新设计，从意图澄清开始", "code_only：存量代码逆向"],
+      "valid_choices": ["full_design", "code_only", "both_exist", "放弃模块"]
+    }
   ]
 }
 ```
 
 - `instance_id`：需要确认的实例 ID。**与当前父实例不同时，确认目标为子工作流实例**
 - `parent_stage_id`：仅子实例 confirm 出现，标识对应父工作流的哪个 stage
+- `valid_choices`：该 stage 所有 `confirmed` + `rejected` 边的 `choice` 值——**这是选项的权威来源**。可能为 `null`（子实例尚未加载其工作流 spec）
+- `questions`：SubAgent 上报的原始选项文本，仅用于提供 `description`
 
 执行步骤：
 0. **确认时机判断**：读取每条 pending 的 questions 内容，判断是前置对齐还是终审验收（详见「确认时机判断」章节）
-1. 从 `pending` 中依次选取 stage，通过 `AskUserQuestion` 逐一向用户呈现。若判断为前置对齐，在 description 中按「确认时机判断」的呈现方式追加警告
-2. 每个问题呈现时，解析 SubAgent 提供的 `confirm_questions` 中的 question/options/header/multiSelect
+1. **以 `valid_choices` 为权威构造 AskUserQuestion**：
+
+   a. 若 `valid_choices` 非空：用它作为选项列表，从 `questions` 中匹配描述文本
+   b. 解析 `questions`：对每条 question 找**第一个中文全角冒号 `：`**，之前为 `choice_key`，之后为 `description`
+   c. 将 `valid_choices` 逐条映射：choice 匹配到 question → 用其 description；未匹配 → description 为 `"（未提供描述）"`
+   d. 若 `valid_choices` 为 `null`（子实例）：降级为直接从 `questions` 解析（旧逻辑）
+
+   构造 `AskUserQuestion`：
+   - `header`: `"确认 {stage_id} 阶段"`
+   - `options`: `[{label: "<choice>", description: "<映射到的描述>"}, ...]`
+
+   用户选择后，答案即为 `label`（即 `valid_choices` 中的原始 choice 值），直接用作 `--choice`。
+
+2. 若判断为前置对齐，在 description 中按「确认时机判断」的呈现方式追加警告
 3. 用户选择后，**使用 `pending` 条目中的 `instance_id`**（不是父实例 ID）调用：
    ```
-   wfctl confirm --instance <pending条目.instance_id> --stage <stage_id> --choice "<选项值>" [--feedback "..."]
+   wfctl confirm --instance <pending条目.instance_id> --stage <stage_id> --choice "<label>" [--feedback "..."]
    ```
 4. 父实例自身的确认 → 确认后调 `wfctl next --instance <父实例>`。子实例确认 → 确认后**对父实例**调 `wfctl next`，父 `next` 会感知到子实例状态变化并聚合下一轮 confirm
 5. **关键**：`confirm` action 是当前时刻的快照。你选取 stage 逐个呈现，而不是一次性全部展示。确认的 `--instance` 始终取 pending 条目中的 `instance_id`
@@ -229,7 +247,7 @@ wfctl `next` 返回的 `confirm` action 是**快照**——当前所有 `AWAITIN
 3. 立即调用 `wfctl next`——剩余 pending 自然出现在下一轮
 4. 重复，直到 `next` 不再返回 `confirm` action
 
-**`--choice` 的值**来自 SubAgent 在 `confirm_questions` 中预设的选项值。你只做传话——不修改选项，不自行生成选项。
+**`--choice` 的值**：取用户选择的 `label` 值（见步骤 1 的解析规则），直接传给 `wfctl confirm`。不修改、不自生成。
 
 **拒绝处理**：用户选择 `rejected` 选项时：
 - 有 `rejected` edge → stage → PENDING（重做），SubAgent 重新 spawn 时注入 `--feedback`
