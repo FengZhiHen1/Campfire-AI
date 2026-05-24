@@ -1082,13 +1082,16 @@ def _allocate_and_spawn(ready: list[str], instance: dict, instance_id: str, adj,
         stage_state["started_at"] = iso_timestamp()
 
         # 构建 context
-        context = _build_context(stage_id, adj, instance)
+        context = _build_context(stage_id, adj, instance, stage_spec)
 
         needs_targets = any(
             s.parallel and s.parallel.source == stage_id
             for s in spec.stages
         )
         stage_state["requires_parallel_targets"] = needs_targets
+
+        routing_choices = _collect_success_choices(adj, stage_id)
+        stage_state["valid_routing_choices"] = routing_choices
 
         if matched_agent:
             # Level 2: 同步 stage worktree ↔ 实例 worktree（continue 前）
@@ -1125,6 +1128,7 @@ def _allocate_and_spawn(ready: list[str], instance: dict, instance_id: str, adj,
                 "system_agent_id": sys_id,
                 "requires_parallel_targets": needs_targets,
                 "confirmation_point": stage_spec.confirmation_point,
+                "valid_routing_choices": routing_choices,
                 "context": context,
             })
         else:
@@ -1135,6 +1139,7 @@ def _allocate_and_spawn(ready: list[str], instance: dict, instance_id: str, adj,
                 "worktree": str(worktree.relative_to(root)),
                 "requires_parallel_targets": needs_targets,
                 "confirmation_point": stage_spec.confirmation_point,
+                "valid_routing_choices": routing_choices,
                 "context": context,
             })
 
@@ -1194,9 +1199,8 @@ def _lookup_running_agent(running_agents: list[dict], skill_id: str) -> dict | N
     return None
 
 
-def _build_context(stage_id: str, adj, instance: dict) -> dict:
+def _build_context(stage_id: str, adj, instance: dict, stage_spec) -> dict:
     """构建传递给 SubAgent 的上下文。"""
-    # 上游摘要
     upstream_summaries = []
     for edge in adj.incoming.get(stage_id, []):
         upstream_stage = next((s for s in instance["stages"] if s["stage_id"] == edge.from_stage), None)
@@ -1208,7 +1212,44 @@ def _build_context(stage_id: str, adj, instance: dict) -> dict:
 
     return {
         "upstream": upstream_summaries,
+        "stage_name": stage_spec.name or stage_id,
+        "successor_stages_block": _build_successor_stages_block(stage_id, stage_spec, adj),
     }
+
+
+def _build_successor_stages_block(stage_id: str, stage_spec, adj) -> str:
+    """按 subagent-prompt-template.md 生成规则构造后继 stage 清单文本。"""
+    current_skill_id = stage_spec.target
+    current_name = stage_spec.name or stage_id
+
+    successors: list[tuple[str, str, str | None]] = []
+    for edge in adj.outgoing.get(stage_id, []):
+        if edge.condition.value in ("success", "always"):
+            succ_spec = adj.stages.get(edge.to_stage)
+            if succ_spec and succ_spec.target_type != StageTargetType.VIRTUAL:
+                successors.append((edge.to_stage, succ_spec.name or edge.to_stage, succ_spec.target))
+
+    if not successors:
+        return "你是工作流的最后一个 stage，需产出最终交付物。完成后上报 DONE。"
+
+    lines = [
+        "本 stage 下游还有以下 stage，它们将由编排器独立调度，**不属于你的职责范围**："
+    ]
+    for succ_id, succ_name, succ_skill in successors:
+        if succ_skill == current_skill_id:
+            lines.append(
+                f"  - {succ_id}「{succ_name}」⚠️ 与你使用同一 Skill——"
+                f"你只需执行 Skill 中属于「{current_name}」的部分"
+            )
+        else:
+            lines.append(f"  - {succ_id}「{succ_name}」")
+    lines.append("")
+    lines.append(
+        f"你只需完成「{current_name}」的工作，产出 checkpoint，"
+        f"然后上报 DONE / AWAITING_CONFIRM 并停止。"
+        f"后续 stage 由编排器根据你的 checkpoint 和路由选择独立调度。"
+    )
+    return "\n".join(lines)
 
 
 def _collect_confirm_action(instance: dict, adj) -> dict | None:
@@ -1268,6 +1309,17 @@ def _collect_valid_choices(adj, stage_id: str) -> list[str]:
     choices: list[str] = []
     for e in get_confirmed_edges(adj, stage_id) + get_rejected_edges(adj, stage_id):
         if e.choice and e.choice not in choices:
+            choices.append(e.choice)
+    return choices
+
+
+def _collect_success_choices(adj, stage_id: str) -> list[str]:
+    """收集 stage 所有 SUCCESS 边的 choice 值（去重，不含 None）。
+    返回空列表表示该 stage 无路由选择。
+    """
+    choices: list[str] = []
+    for e in adj.outgoing.get(stage_id, []):
+        if e.condition.value == "success" and e.choice and e.choice not in choices:
             choices.append(e.choice)
     return choices
 
