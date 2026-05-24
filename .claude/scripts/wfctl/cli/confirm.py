@@ -98,6 +98,20 @@ def _handle_confirm(args) -> dict:
         if stage.get("requires_parallel_targets"):
             _validate_parallel_targets_in_message(args.instance, stage_id, stage)
 
+        # confirmation_point：用户确认 ≠ 完成，确认后 SubAgent 继续工作
+        stage_spec = adj.stages.get(stage_id)
+        if stage_spec and stage_spec.confirmation_point:
+            stage["status"] = "PENDING"
+            stage["confirmed_choice"] = choice
+            if args.feedback:
+                _write_feedback_message(args.instance, stage_id, stage, choice, args.feedback)
+            _append_timeline(args.instance, stage_id, "awaiting_confirm→pending",
+                             {"confirmed_by": "user", "choice": choice,
+                              "reason": "confirmation_point"})
+            save_instance(args.instance, instance)
+            return {"status": "ok", "stage_id": stage_id, "new_status": "PENDING",
+                    "matched": choice, "reason": "confirmation_point_continue"}
+
         stage["status"] = "DONE"
         stage["exit_condition"] = "confirmed"
         stage["confirmed_choice"] = choice
@@ -242,13 +256,17 @@ def _write_feedback_message(instance_id: str, stage_id: str, stage: dict, choice
 def _cascade_reset_on_backward_edge(instance: dict, spec, from_stage_id: str,
                                      to_stage_id: str, instance_id: str) -> None:
     """回边级联重置：当确认边指向拓扑序更早的 Stage 时，
-    将起止 Stage 之间的所有中间 Stage 重置为 PENDING。
+    将起止 Stage 之间的所有中间 Stage（含 from_stage 自身）重置为 PENDING。
 
     判断依据：to_stage 在 WORKFLOW.yaml stages 列表中的位置早于 from_stage。
-    重置范围：[to_stage, from_stage)，不含 from_stage（它已 DONE）。
+    重置范围：[to_stage, from_stage]（含 from_stage —— rejected 边的源 stage
+    需要重新执行才能产出 confirmed/success 结果）。
 
     每个中间 Stage 的所有实例（含 parallel fan-out）被折叠为单一 PENDING 条目，
     确保 downstream 的 _check_parallel 可以重新创建正确的 parallel 实例。
+
+    同时清理 running_agents.json 中被重置 stage 的条目，避免同 Skill 延续检测
+    误匹配到已停止的 SubAgent。
     """
     stage_order = [s.stage_id for s in spec.stages]
     try:
@@ -261,8 +279,9 @@ def _cascade_reset_on_backward_edge(instance: dict, spec, from_stage_id: str,
         return  # 非回边，无需处理
 
     spec_stage_map = {s.stage_id: s for s in spec.stages}
+    reset_sids: list[str] = []
 
-    for i in range(to_idx, from_idx):
+    for i in range(to_idx, from_idx + 1):
         sid = stage_order[i]
         stage_spec = spec_stage_map.get(sid)
 
@@ -272,6 +291,8 @@ def _cascade_reset_on_backward_edge(instance: dict, spec, from_stage_id: str,
 
         if not needs_reset:
             continue
+
+        reset_sids.append(sid)
 
         # 移除所有现有实例，替换为单一 PENDING 条目
         instance["stages"] = [s for s in instance["stages"] if s["stage_id"] != sid]
@@ -293,6 +314,37 @@ def _cascade_reset_on_backward_edge(instance: dict, spec, from_stage_id: str,
                          {"reason": "backward_edge_cascade",
                           "from_stage": from_stage_id,
                           "to_stage": to_stage_id})
+
+    # 清理 running_agents.json 中被重置 stage 的条目，
+    # 防止 _lookup_running_agent 匹配到已停止的 SubAgent 而生成 continue 而非 spawn
+    if reset_sids:
+        _cleanup_running_agents_for_reset(instance_id, reset_sids)
+
+
+def _cleanup_running_agents_for_reset(instance_id: str, reset_stage_ids: list[str]) -> None:
+    """从 running_agents.json 中移除被级联重置的 stage 条目。
+
+    不清理会导致 _lookup_running_agent 匹配到已停止的 SubAgent，
+    为就绪 stage 生成 continue 而非 spawn——工作流卡死。
+    """
+    root = find_root()
+    path = root / ".agent" / "running_agents.json"
+    if not path.exists():
+        return
+
+    try:
+        agents = json.loads(path.read_text(encoding="utf-8"))
+        before = len(agents)
+        agents = [
+            a for a in agents
+            if not (a.get("instance_id") == instance_id
+                    and a.get("stage_id") in reset_stage_ids)
+        ]
+        if len(agents) != before:
+            path.write_text(json.dumps(agents, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _validate_parallel_targets_in_message(instance_id: str, stage_id: str, stage: dict) -> None:
