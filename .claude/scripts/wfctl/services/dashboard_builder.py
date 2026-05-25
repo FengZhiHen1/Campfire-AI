@@ -86,14 +86,24 @@ def _build_file_link(instance_id: str, stage_instance_id: str, file_path: str) -
     inst_wt = root / ".tmp" / "worktrees" / f"instance-{instance_id}"
 
     if stage_wt.exists():
-        abs_path = (stage_wt / file_path).resolve()
+        base = stage_wt
         badge = "worktree"
     elif inst_wt.exists():
-        abs_path = (inst_wt / file_path).resolve()
+        base = inst_wt
         badge = "merged"
     else:
-        abs_path = (root / file_path).resolve()
+        base = root
         badge = "main"
+
+    abs_path = (base / file_path).resolve()
+
+    # 兜底：记录的路径不存在时，尝试带点/不带点的变体
+    if not abs_path.exists():
+        p = Path(file_path)
+        alt_name = f".{p.name}" if not p.name.startswith(".") else p.name[1:]
+        alt_path = (base / p.parent / alt_name).resolve()
+        if alt_path.exists():
+            abs_path = alt_path
 
     # Windows 路径转 URI：反斜杠 -> 正斜杠，带盘符时前面加 /
     path_str = str(abs_path).replace("\\", "/")
@@ -201,6 +211,7 @@ def _collect_instance_data(instance_id: str) -> dict | None:
         if msg_id and msg_id in messages:
             msg = messages[msg_id]
             raw_files = msg.get("modified_files", [])
+            msg_ts = msg.get("timestamp", "")
             for entry in _normalize_modified_files(raw_files):
                 link, badge = _build_file_link(instance_id, s_inst_id, entry["path"])
                 files.append({
@@ -211,6 +222,7 @@ def _collect_instance_data(instance_id: str) -> dict | None:
                     "badge": badge,
                     "stage_id": sid,
                     "stage_status": status,
+                    "timestamp": msg_ts,
                 })
                 all_files.append({
                     "path": entry["path"],
@@ -220,6 +232,7 @@ def _collect_instance_data(instance_id: str) -> dict | None:
                     "badge": badge,
                     "stage_id": sid,
                     "stage_status": status,
+                    "timestamp": msg_ts,
                 })
 
         # 优先从 instance.json 读取 agent，否则从 running_agents.json 补充
@@ -248,9 +261,8 @@ def _collect_instance_data(instance_id: str) -> dict | None:
         seen_files[f["path"]] = f
     all_files = list(seen_files.values())
 
-    # 按时间倒序排列文件（基于 stage 在 stages 数组中的位置近似）
-    # DONE/RUNNING 的 stage 文件排在前面
-    all_files.sort(key=lambda f: (0 if f["stage_status"] in ("DONE", "RUNNING") else 1, f["stage_id"]))
+    # 按时间倒序排列文件：越新的越在上面
+    all_files.sort(key=lambda f: f.get("timestamp", ""), reverse=True)
 
     # 阻塞点
     blocked_by = []
