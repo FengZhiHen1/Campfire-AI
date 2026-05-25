@@ -5,10 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from core.errors import InputError, StateError
+from infrastructure.errors import InputError, StateError
 from services.state_manager import (
     append_deviation,
-    consume_messages,
     load_instance,
     save_instance,
 )
@@ -69,95 +68,9 @@ def test_save_instance(monkeypatch, tmp_path: Path):
     save_instance("20260517-001", data)
     path = repo / ".agent" / "instances" / "20260517-001" / "instance.json"
     assert path.exists()
-    assert json.loads(path.read_text(encoding="utf-8")) == data
-
-
-def test_consume_messages_done(monkeypatch, tmp_path: Path):
-    repo = tmp_path / "project"
-    repo.mkdir()
-    (repo / ".agent" / "instances" / "inst-001" / "messages").mkdir(parents=True)
-    msg = {
-        "schema_version": "3.0.0",
-        "message_id": "msg-abc12345",
-        "instance_id": "inst-001",
-        "stage_id": "s01",
-        "status": "DONE",
-        "report": "done",
-        "timestamp": "2026-05-17T10:00:00+0800",
-    }
-    (repo / ".agent" / "instances" / "inst-001" / "messages" / "msg-abc12345.json").write_text(
-        json.dumps(msg), encoding="utf-8"
-    )
-    monkeypatch.chdir(repo)
-
-    instance = {
-        "stages": [
-            {"stage_id": "s01", "status": "RUNNING"},
-        ],
-        "consumed_message_ids": [],
-    }
-    worktree_map = {"s01": repo}
-    changes = consume_messages("inst-001", instance, worktree_map)
-    assert len(changes) == 1
-    assert changes[0]["new_status"] == "DONE"
-    assert instance["stages"][0]["status"] == "DONE"
-    assert "msg-abc12345" in instance["consumed_message_ids"]
-
-
-def test_consume_messages_awaiting_confirm(monkeypatch, tmp_path: Path):
-    repo = tmp_path / "project"
-    repo.mkdir()
-    (repo / ".agent" / "instances" / "inst-001" / "messages").mkdir(parents=True)
-    msg = {
-        "schema_version": "3.0.0",
-        "message_id": "msg-def12345",
-        "instance_id": "inst-001",
-        "stage_id": "s02",
-        "status": "AWAITING_CONFIRM",
-        "report": "confirm please",
-        "confirm_questions": ["确认?"],
-        "timestamp": "2026-05-17T10:00:00+0800",
-    }
-    (repo / ".agent" / "instances" / "inst-001" / "messages" / "msg-def12345.json").write_text(
-        json.dumps(msg), encoding="utf-8"
-    )
-    monkeypatch.chdir(repo)
-
-    instance = {
-        "stages": [
-            {"stage_id": "s02", "status": "RUNNING"},
-        ],
-        "consumed_message_ids": [],
-    }
-    worktree_map = {"s02": repo}
-    changes = consume_messages("inst-001", instance, worktree_map)
-    assert changes[0]["new_status"] == "AWAITING_CONFIRM"
-    assert instance["stages"][0]["confirm_questions"] == ["确认?"]
-
-
-def test_consume_messages_idempotent(monkeypatch, tmp_path: Path):
-    repo = tmp_path / "project"
-    repo.mkdir()
-    (repo / ".agent" / "instances" / "inst-001" / "messages").mkdir(parents=True)
-    msg = {
-        "message_id": "msg-xyz12345",
-        "instance_id": "inst-001",
-        "stage_id": "s01",
-        "status": "DONE",
-        "timestamp": "2026-05-17T10:00:00+0800",
-    }
-    (repo / ".agent" / "instances" / "inst-001" / "messages" / "msg-xyz12345.json").write_text(
-        json.dumps(msg), encoding="utf-8"
-    )
-    monkeypatch.chdir(repo)
-
-    instance = {
-        "stages": [{"stage_id": "s01", "status": "RUNNING"}],
-        "consumed_message_ids": ["msg-xyz12345"],
-    }
-    worktree_map = {"s01": repo}
-    changes = consume_messages("inst-001", instance, worktree_map)
-    assert len(changes) == 0
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["instance_id"] == "20260517-001"
+    assert saved["status"] == "ACTIVE"
 
 
 def test_append_deviation(monkeypatch, tmp_path: Path):

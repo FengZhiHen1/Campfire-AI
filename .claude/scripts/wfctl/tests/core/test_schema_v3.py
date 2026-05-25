@@ -2,9 +2,9 @@
 
 import pytest
 
-from core.errors import SchemaError
-from core.schema.interface import EdgeCondition, StageTargetType
-from core.schema.v3 import V3Adapter
+from infrastructure.errors import SchemaError
+from domain.workflow.spec import EdgeCondition, StageTargetType
+from compat.workflow.v3 import V3WorkflowAdapter
 
 
 SAMPLE_YAML_DICT = {
@@ -20,7 +20,6 @@ SAMPLE_YAML_DICT = {
             "name": "分析",
             "skill_id": "analyst",
             "mandatory": True,
-            "confirmation_point": True,
             "retry": 2,
         },
         {
@@ -28,7 +27,6 @@ SAMPLE_YAML_DICT = {
             "name": "设计",
             "workflow": "design@1.0.0",
             "mandatory": True,
-            "confirmation_point": False,
             "parallel": {"source": "s01", "max_instances": 5},
             "exclusive": True,
         },
@@ -36,15 +34,15 @@ SAMPLE_YAML_DICT = {
     ],
     "edges": [
         {"from": "s00-workflow-start", "to": "s01", "condition": "always"},
-        {"from": "s01", "to": "s02", "condition": "confirmed", "choice": "通过"},
-        {"from": "s01", "to": "s01", "condition": "rejected", "max_loop": 3},
+        {"from": "s01", "to": "s02", "condition": "success", "choice": "通过"},
+        {"from": "s01", "to": "s01", "condition": "success", "max_loop": 3},
         {"from": "s02", "to": "s99-workflow-end", "condition": "success"},
     ],
 }
 
 
 def test_parse_basic():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     spec = adapter.parse(SAMPLE_YAML_DICT)
     assert spec.workflow_id == "test-flow"
     assert spec.version == "1.0.0"
@@ -54,7 +52,7 @@ def test_parse_basic():
 
 
 def test_virtual_stage():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     spec = adapter.parse(SAMPLE_YAML_DICT)
     start = spec.stages[0]
     assert start.target_type == StageTargetType.VIRTUAL
@@ -62,17 +60,16 @@ def test_virtual_stage():
 
 
 def test_skill_stage():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     spec = adapter.parse(SAMPLE_YAML_DICT)
     s01 = spec.stages[1]
     assert s01.target_type == StageTargetType.SKILL
     assert s01.target == "analyst"
     assert s01.retry == 2
-    assert s01.confirmation_point is True
 
 
 def test_workflow_stage():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     spec = adapter.parse(SAMPLE_YAML_DICT)
     s02 = spec.stages[2]
     assert s02.target_type == StageTargetType.WORKFLOW
@@ -84,20 +81,20 @@ def test_workflow_stage():
 
 
 def test_missing_required():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     bad = {"schema_version": "3.0.0", "workflow_id": "x"}
     with pytest.raises(SchemaError):
         adapter.parse(bad)
 
 
 def test_stage_without_target():
-    adapter = V3Adapter()
+    adapter = V3WorkflowAdapter()
     bad = {
         "schema_version": "3.0.0",
         "workflow_id": "x",
         "version": "1.0.0",
         "max_parallel_agents": 1,
-        "stages": [{"stage_id": "s01", "name": "x", "mandatory": True, "confirmation_point": False}],
+        "stages": [{"stage_id": "s01", "name": "x", "mandatory": True, }],
         "edges": [],
     }
     with pytest.raises(SchemaError):

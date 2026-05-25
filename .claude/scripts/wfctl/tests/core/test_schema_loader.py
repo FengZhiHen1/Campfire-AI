@@ -2,9 +2,9 @@
 
 import pytest
 
-from core.errors import SchemaError
-from core.schema.loader import _get_adapter, load_workflow
-from core.schema.v3 import V3Adapter
+from infrastructure.errors import SchemaError
+from compat.workflow.registry import _get_adapter, load_workflow
+from compat.workflow.v3 import V3WorkflowAdapter
 
 
 SAMPLE_YAML = """
@@ -20,7 +20,6 @@ stages:
     name: "分析"
     skill_id: analyst
     mandatory: true
-    confirmation_point: false
 edges:
   - from: s00-workflow-start
     to: s01
@@ -69,7 +68,7 @@ def test_unsupported_schema_version(tmp_path):
 
 def test_get_adapter_v3():
     adapter = _get_adapter("3.0.0")
-    assert isinstance(adapter, V3Adapter)
+    assert isinstance(adapter, V3WorkflowAdapter)
 
 
 def test_get_adapter_unknown():

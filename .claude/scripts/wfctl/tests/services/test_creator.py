@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from core.errors import InputError
+from infrastructure.errors import InputError
 from services.creator import create_instance
 
 
@@ -20,7 +20,7 @@ def test_create_instance_success(monkeypatch, tmp_path: Path):
     wf_dir = repo / ".claude" / "workflows" / "test-flow"
     wf_dir.mkdir(parents=True)
     (wf_dir / "WORKFLOW.yaml").write_text(
-        'schema_version: "3.0.0"\nworkflow_id: test-flow\nversion: "1.0.0"\nmax_parallel_agents: 2\nanchor_prefix: "wf"\nstages:\n  - stage_id: s00-workflow-start\n    name: "开始"\n  - stage_id: s01\n    name: "分析"\n    skill_id: analyst\n    mandatory: true\n    confirmation_point: false\nedges:\n  - from: s00-workflow-start\n    to: s01\n    condition: always',
+        'schema_version: "3.0.0"\nworkflow_id: test-flow\nversion: "1.0.0"\nmax_parallel_agents: 2\nanchor_prefix: "wf"\nstages:\n  - stage_id: s00-workflow-start\n    name: "开始"\n  - stage_id: s01\n    name: "分析"\n    skill_id: analyst\n    mandatory: true\n\nedges:\n  - from: s00-workflow-start\n    to: s01\n    condition: always',
         encoding="utf-8",
     )
 
@@ -33,11 +33,11 @@ def test_create_instance_success(monkeypatch, tmp_path: Path):
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
 
     monkeypatch.chdir(repo)
-    result = create_instance("test-flow", goal="test goal")
+    state = create_instance("test-flow", goal="test goal")
 
-    assert result["status"] == "ok"
-    assert result["workflow_id"] == "test-flow"
-    inst_id = result["instance_id"]
+    assert state.instance_id
+    assert state.workflow_id == "test-flow"
+    inst_id = state.instance_id
 
     # 验证 instance.json
     inst_path = repo / ".agent" / "instances" / inst_id / "instance.json"

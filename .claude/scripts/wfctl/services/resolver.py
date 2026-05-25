@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from core.errors import InputError
-from core.project import find_root
-from core.schema.interface import WorkflowSpec
-from core.schema.loader import load_workflow
+from infrastructure.errors import InputError
+from infrastructure.project import find_root
+from domain.workflow.spec import WorkflowSpec
+from compat.workflow.registry import load_workflow
 
 
 def find_workflow_dir(workflow_id: str, version: str | None = None) -> Path:
@@ -109,7 +109,6 @@ def resolve_workflow(workflow_id: str, version: str | None = None) -> dict:
                 "target_type": s.target_type.value,
                 "target": s.target,
                 "mandatory": s.mandatory,
-                "confirmation_point": s.confirmation_point,
                 "retry": s.retry,
                 "timeout_seconds": s.timeout_seconds,
                 "model": s.model,
@@ -127,7 +126,6 @@ def resolve_workflow(workflow_id: str, version: str | None = None) -> dict:
                 "to": e.to_stage,
                 "condition": e.condition.value,
                 "max_loop": e.max_loop,
-                "loop_counter_stage": e.loop_counter_stage,
                 "choice": e.choice,
                 "aggregation": e.aggregation,
             }
