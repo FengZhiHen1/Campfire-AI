@@ -44,19 +44,15 @@ python .claude/scripts/wfctl/main.py <command> [options]
 ## 三、Message 上报规范
 
 1. 终止前必须通过 `wfctl message write` 写入 Message
-2. 禁止直接手写 JSON 到 `.agent/workflows/instances/` 下的消息池
-3. `status` 取以下之一：
-   - `DONE` — 阶段完成
-   - `ERROR` — 失败
-   - `AWAITING_CONFIRM` — 需要用户确认
-4. `confirm_questions` 长度 ∈ [1, 4]，一次性全部列出
-5. 上报即终态——每次上报代表明确的阶段结局
+2. 禁止直接编辑 `.agent/` 目录下的任何文件（包括 `instance.json`、`messages/*.json` 等）
+3. 各字段格式、status 语义、约束详见 `.claude/contracts/output.md`
+4. 上报即终态——每次上报代表明确的阶段结局
 
 ---
 
 ## 四、变更与降级说明
 
-SubAgent 不自行判定是否需要用户确认——该决策由 WORKFLOW.yaml 的 `confirmation_point` 字段控制，编排器通过 `wfctl next` 感知后负责呈现确认。
+SubAgent 在需要用户确认时上报 AWAITING_CONFIRM，编排器通过 `wfctl next` 感知后负责呈现确认。
 
 ### 方案级降级（禁止自主执行，必须上报 AWAITING_CONFIRM）
 

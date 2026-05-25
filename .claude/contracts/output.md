@@ -104,3 +104,38 @@ python .claude/scripts/wfctl/main.py message write \
 | 产出 target 数量与自然单元数不一致 | 下游实例过多或过少 | 对齐自然分解数 |
 | target 的 `id` 无业务含义（如 `t1`、`t2`） | 下游 SubAgent 无法识别自己的任务 | 使用业务标识（如 `Task1`、`Q3`） |
 | `context` 为空或过简 | 下游 SubAgent 缺少执行上下文 | 包含数据源、约束、目标等关键信息 |
+
+---
+
+## 七、confirm_questions 规范
+
+> 仅当 `status=AWAITING_CONFIRM` 时适用。confirm_questions 是自由格式的选项列表，选项值不再需要匹配工作流边定义。SubAgent 通过后续 continue prompt 获取用户选择并自行决定后续行为（包括通过 DONE + routing_choice 选择下游路径）。
+
+### 7.1 格式约定
+
+建议使用 **`<choice值>：<显示文本>`** 格式，中文冒号分隔：
+
+```
+"<choice值>：<面向用户的自然语言描述>"
+```
+
+- `：`（中文全角冒号）**之前**的部分 = 编排器取此前缀作为 `--choice` 参数传给 `wfctl confirm`
+- `：`**之后**的部分 = 面向用户的显示文本，可以是自然语言、含括号注释等
+
+### 7.2 示例
+
+```json
+[
+  "full_design：全新设计，从意图澄清开始走完整流程",
+  "code_only：存量代码逆向，从反向工程开始",
+  "放弃：终止本工作流实例"
+]
+```
+
+### 7.3 约束
+
+| 规则 | 说明 |
+|------|------|
+| 选项数量 ≤ 4 | wfctl 限制 |
+| `choice` 值不含 `：` | 避免解析歧义 |
+| 选项值自由定义 | 不再需要匹配工作流边 choice，SubAgent 自行决定如何映射 |
