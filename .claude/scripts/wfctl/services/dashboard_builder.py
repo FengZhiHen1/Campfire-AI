@@ -242,6 +242,12 @@ def _collect_instance_data(instance_id: str) -> dict | None:
             "files": files,
         })
 
+    # 去重：同一文件只保留最后一次出现（后出现的 stage 覆盖前面的）
+    seen_files: dict[str, dict] = {}
+    for f in all_files:
+        seen_files[f["path"]] = f
+    all_files = list(seen_files.values())
+
     # 按时间倒序排列文件（基于 stage 在 stages 数组中的位置近似）
     # DONE/RUNNING 的 stage 文件排在前面
     all_files.sort(key=lambda f: (0 if f["stage_status"] in ("DONE", "RUNNING") else 1, f["stage_id"]))
@@ -415,9 +421,9 @@ h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
   border-radius: 12px;
   padding: 20px;
   transition: background 0.15s, border-color 0.15s;
-  text-decoration: none;
   color: inherit;
   display: block;
+  cursor: pointer;
 }
 .instance-card:hover {
   background: var(--surface-hover);
@@ -428,6 +434,8 @@ h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 12px;
+  text-decoration: none;
+  color: inherit;
 }
 .card-title {
   font-size: 1rem;
@@ -583,14 +591,14 @@ function toggleExtra(id) {
 </html>
 """
 
-_INDEX_INSTANCE_CARD = """<a class="instance-card" href="instances/{instance_id}.html">
-  <div class="card-header">
+_INDEX_INSTANCE_CARD = """<div class="instance-card" data-href="instances/{instance_id}.html">
+  <a class="card-header" href="instances/{instance_id}.html">
     <div class="card-title">
       {instance_id}
       <span class="wf">{workflow_id}</span>
     </div>
     <span class="badge badge-{status_class}">{status}</span>
-  </div>
+  </a>
 
   <div class="progress">
     <div class="progress-bar"><div class="progress-fill" style="width:{progress_pct}%"></div></div>
@@ -609,7 +617,7 @@ _INDEX_INSTANCE_CARD = """<a class="instance-card" href="instances/{instance_id}
     <span>Created {created_at}</span>
     <span>{goal}</span>
   </div>
-</a>
+</div>
 """
 
 
