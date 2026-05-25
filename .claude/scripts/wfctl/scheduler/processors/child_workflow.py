@@ -13,7 +13,7 @@ from infrastructure.lock import FileLock
 from infrastructure.project import find_root
 from domain.workflow.spec import StageTargetType
 from infrastructure.timestamp import iso_timestamp
-from compat.instance.registry import load_instance_state
+from compat.instance.registry import load_instance_state, save_instance_state
 from scheduler.context import ExecutionContext
 from state.model import (
     CycleMeta,
@@ -43,8 +43,9 @@ class ChildWorkflowProcessor:
         # 2. 创建子工作流实例
         self._spawn_child_workflows(state, ctx, delta, side_effects)
 
-        # 3. 递归调度活跃子实例
-        child_results = self._recurse_child_instances(state, ctx, side_effects)
+        # 3. 递归调度活跃子实例（需合并 delta，确保刚创建的子实例也能被调度）
+        merged_state = state.apply_delta(delta)
+        child_results = self._recurse_child_instances(merged_state, ctx, side_effects)
 
         # 4. 递归后二次检查
         self._check_child_workflows(state, ctx, delta, side_effects)
@@ -243,6 +244,9 @@ class ChildWorkflowProcessor:
 
                 if child_result.get("status") != "ok":
                     continue
+
+                # 持久化子实例状态变更，避免递归编排后的 stage 变更丢失
+                save_instance_state(child_id, child_result["_state"])
 
                 for action in child_result.get("actions", []):
                     action_type = action.get("action")
