@@ -51,7 +51,7 @@ python .claude/scripts/wfctl/main.py <command> [options]
 | `references/subagent-prompt-template.md` | SubAgent prompt 构造模板，含全部占位符来源表和特殊场景处理 |
 | `references/model-mapping.yaml` | 模型档位映射表——按平台将 light/standard/heavy 解析为具体模型名 |
 | `references/action-handlers.md` | spawn/continue/conflict/merge_to_main/terminate/await 的完整 JSON 示例和执行步骤 |
-| `references/running-agents-mapping.md` | SubAgent 映射表 schema、生命周期、命中规则、编排器操作速查 |
+
 | `references/edge-cases.md` | 回退/暂停/跳过/终止/恢复等低频场景的完整操作流程 |
 | `.claude/contracts/common.md` | 通用契约（SubAgent 自行读取，编排器不读不转述） |
 
@@ -123,7 +123,7 @@ wfctl create --workflow <id>@<ver> --goal "<用户目标描述>"
 
 ### Step 3: 调度循环
 
-**SubAgent 映射表**存放在 `.agent/running_agents.json`（项目级唯一文件）。编排器在 `spawn`/`continue` 后维护此文件，`next` 自动读取并按 `instance_id` 过滤。
+**Agent 追踪**通过 stage state 中的 `system_agent_id` 字段实现。编排器 spawn 后调用 `wfctl register-agent` 写入，`next` 扫描同 instance 内同 skill 的 RUNNING/DONE stage 自动匹配。
 
 ```
 wfctl next --instance <instance_id>
@@ -157,7 +157,7 @@ wfctl next --instance <instance_id>
 | action | 行为 | 详情 |
 |--------|------|------|
 | `spawn` | 解析 skill 路径 → 构造 prompt → `Agent(run_in_background=true)` → 写映射表 | 下方 §spawn |
-| `continue` | 构造 prompt → `SendMessage` 两条 → 不等待 | 下方 §continue |
+| `continue` | 构造 prompt → `SendMessage` 一条 → 不等待 | 下方 §continue |
 | `confirm` | 判断时机 → `AskUserQuestion` → `wfctl confirm` → 立即 `next` | 下方 §confirm（完整） |
 | `conflict` | 启动 conflict-resolver SubAgent 消解 | `references/action-handlers.md` §conflict |
 | `merge_to_main` | 一级实例先经 `__merge__` 确认；子实例直接合入 | `references/action-handlers.md` §merge_to_main |
@@ -171,34 +171,31 @@ wfctl next --instance <instance_id>
 2. 按 `references/subagent-prompt-template.md` 构造 prompt
 3. 按 `references/model-mapping.yaml` 解析 model 档位 → `Agent(model=...)`
 4. `Agent(worktree=<worktree>, model=<resolved>, prompt=<prompt>, run_in_background=true)`
-   - **禁止**传入 `isolation: "worktree"`——worktree 由 wfctl 管理（`create_instance_worktree` / `create_stage_worktree`），Agent 工具不应再创建第二层隔离
+   - **禁止**传入 `isolation: "worktree"`——worktree 由 wfctl 管理，Agent 工具不应再创建第二层隔离
    - `worktree` 参数仅用于设置 SubAgent 的工作目录，不是隔离模式
-5. 写 `.agent/running_agents.json`：`{skill_id, system_agent_id, stage_id, instance_id}`（按 `system_agent_id` 去重）
+   - `Agent()` 返回 `system_agent_id`（平台分配的 agent 标识）
+5. 调用 `wfctl register-agent --instance <id> --stage <id> --agent-id <system_agent_id>` 将 agent ID 写入 stage state
 6. 不等待——继续下一个 action
 
 JSON 示例和完整步骤见 `references/action-handlers.md` §spawn。
 
 ### continue —— 延续已有 SubAgent
 
-1. **先验证 agent 存活**：`SendMessage` 探测。若返回 "No transcript found"，降级为 spawn——action 中已含 `skill_id`、`worktree`、`context` 等全部 spawn 所需字段，按 spawn 流程启动新 SubAgent 并覆盖 `running_agents.json` 中对应条目
-2. agent 存活时，按 `references/subagent-prompt-template.md` 的 continue 模板构造 prompt
-3. 向 `system_agent_id` 发两条消息：第一条注入 continue prompt，第二条 "收到请开始执行上述任务" 触发工具调用
-4. 不等待——继续下一个 action
+1. 按 `references/subagent-prompt-template.md` 的 continue 模板构造 prompt（单条消息，末尾自激活，无需额外激活消息）
+2. 向 `system_agent_id` 发送：`SendMessage(to=<system_agent_id>, message=<prompt>)`
+3. 若 `SendMessage` 返回 agent 已失效（"No transcript found"、"stopped (completed)" 等）→ 降级为 spawn，使用 action 中已有的全部字段按 spawn 流程启动新 SubAgent
+4. 若 `SendMessage` 返回其他错误 → 向用户报告，不静默降级
+5. 不等待——继续下一个 action
 
-`next` 已自动更新映射表中的 `stage_id`。JSON 示例和完整步骤见 `references/action-handlers.md` §continue。
+`next` 已自动将 `system_agent_id` 写入当前 stage state。JSON 示例和完整步骤见 `references/action-handlers.md` §continue。
 
-### 映射表维护
+### Agent 追踪
 
-`.agent/running_agents.json` 格式：
-```json
-[
-  {"skill_id": "design-tech-stack", "system_agent_id": "agent-001", "stage_id": "s02", "instance_id": "20260519-001"}
-]
-```
+`system_agent_id` 存储在 stage state 中（`instance.json`），由 wfctl 独占维护：
 
-- **写入时机**：`spawn` 成功后追加
-- **更新时机**：`next` 生成 `continue` action 时自动更新 `stage_id`
-- **清理时机**：SubAgent 崩溃/超时后编排器移除对应条目；实例终止后编排器清理该实例的全部条目
+- **写入时机**：编排器 `spawn` 后调用 `wfctl register-agent --instance <id> --stage <id> --agent-id <system_agent_id>`
+- **读取时机**：`next` 扫描同 instance、同 skill 的 RUNNING/DONE stage，取 `system_agent_id` 生成 `continue`
+- **清理时机**：stage 级联重置后 `system_agent_id` 自然失效；实例删除后随 `instance.json` 一并清理
 
 ### confirm —— 呈现确认
 
@@ -209,7 +206,7 @@ JSON 示例和完整步骤见 `references/action-handlers.md` §spawn。
     {
       "stage_id": "s02",
       "instance_id": "20260519-003",
-      "questions": ["full_design：全新设计，从意图澄清开始", "code_only：存量代码逆向"]
+      "questions": ["全新设计，从意图澄清开始", "存量代码逆向"]
     }
   ]
 }
@@ -354,7 +351,7 @@ wfctl 在每次 `next` 时自动同步。编排器无需额外操作。
 - `references/subagent-prompt-template.md` —— SubAgent prompt 构造模板，含全部占位符来源表和特殊场景处理。
 - `references/model-mapping.yaml` —— 按平台将抽象档位（light/standard/heavy）解析为具体模型名。
 - `references/action-handlers.md` —— 非 confirm action 的完整 JSON 示例和执行步骤。
-- `references/running-agents-mapping.md` —— SubAgent 映射表 schema、生命周期、命中规则、编排器操作速查。
+
 - `references/edge-cases.md` —— 回退、暂停、跳过、终止、中断恢复等低频场景的完整操作流程。
 
 ---
