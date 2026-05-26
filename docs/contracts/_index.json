@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0",
+  "description": "全局契约索引",
+  "last_updated": "2026-05-26 17:21:02",
+  "contracts": {
+    "LogLevel": {
+      "file": "docs/contracts/OBS-01/LogLevel.json",
+      "defined_by": "OBS-01",
+      "maturity": "draft",
+      "consumers": []
+    },
+    "LogInput": {
+      "file": "docs/contracts/OBS-01/LogInput.json",
+      "defined_by": "OBS-01",
+      "maturity": "draft",
+      "consumers": []
+    },
+    "LogEntry": {
+      "file": "docs/contracts/OBS-01/LogEntry.json",
+      "defined_by": "OBS-01",
+      "maturity": "draft",
+      "consumers": []
+    },
+    "FastAPIRequestLog": {
+      "file": "docs/contracts/OBS-01/FastAPIRequestLog.json",
+      "defined_by": "OBS-01",
+      "maturity": "draft",
+      "consumers": []
+    },
+    "Logger": {
+      "file": "docs/contracts/OBS-01/Logger-interface.json",
+      "defined_by": "OBS-01",
+      "maturity": "draft",
+      "consumers": []
+    }
+  }
+}
